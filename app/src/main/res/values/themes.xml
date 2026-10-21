@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="RemoteTheme" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/backdrop</item>
+        <item name="android:statusBarColor">@color/backdrop</item>
+        <item name="android:navigationBarColor">@color/backdrop</item>
+    </style>
+</resources>

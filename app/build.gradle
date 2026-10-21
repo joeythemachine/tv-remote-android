@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+}
+
+def buildNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1") as Integer
+
+android {
+    namespace 'com.joeythemachine.tvremote'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.joeythemachine.tvremote'
+        minSdk 26
+        targetSdk 34
+        versionCode buildNumber
+        versionName "1.0.${buildNumber}"
+    }
+
+    // A fixed signing key, so each new build installs over the previous one.
+    signingConfigs {
+        release {
+            storeFile rootProject.file('keystore/tvremote.jks')
+            storePassword 'tvremote'
+            keyAlias 'tvremote'
+            keyPassword 'tvremote'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
