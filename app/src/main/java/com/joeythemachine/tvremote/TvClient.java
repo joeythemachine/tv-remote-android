@@ -6,6 +6,7 @@ import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
+import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
@@ -16,6 +17,7 @@ import java.net.DatagramSocket;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -53,6 +55,7 @@ public class TvClient {
 
     private final SharedPreferences prefs;
     private final ConnectivityManager connectivity;
+    private final WifiManager wifi;
     private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -77,6 +80,7 @@ public class TvClient {
     public TvClient(Context context, Listener listener) {
         this.prefs = context.getSharedPreferences("tv", Context.MODE_PRIVATE);
         this.connectivity = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        this.wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         this.listener = listener;
         this.tvIp = prefs.getString("ip", DEFAULT_IP);
     }
@@ -91,11 +95,41 @@ public class TvClient {
                 status("Connected to TV");
             } else {
                 probeSaid = "off";
-                status("TV is off - press Power");
+                status("Can't find the TV - hold here for details");
             }
         });
         prober = Executors.newSingleThreadScheduledExecutor();
         prober.scheduleWithFixedDelay(this::probe, 3, 3, TimeUnit.SECONDS);
+    }
+
+    /** The address the app is using for the TV. */
+    public String getTvIp() { return tvIp; }
+
+    /** This tablet's own address(es) on the network, for troubleshooting. */
+    public String getTabletIp() {
+        List<String> mine = new ArrayList<>();
+        try {
+            Network net = connectivity.getActiveNetwork();
+            LinkProperties props = net == null ? null : connectivity.getLinkProperties(net);
+            if (props != null) {
+                for (LinkAddress la : props.getLinkAddresses()) {
+                    if (la.getAddress() instanceof Inet4Address) mine.add(la.getAddress().getHostAddress());
+                }
+            }
+        } catch (Exception ignored) { }
+        return mine.isEmpty() ? "not on Wi-Fi" : String.join(", ", mine);
+    }
+
+    /** Use an address typed in by the person, then connect to it. */
+    public void setTvIp(String ip) {
+        worker.execute(() -> {
+            disconnect();
+            tvIp = ip;
+            prefs.edit().putString("ip", ip).apply();
+            status("Connecting to " + ip + "...");
+            if (ensureConnected(true)) { probeSaid = "on"; status("Connected to TV"); }
+            else { probeSaid = "off"; status("No TV at " + ip + " - hold here to change"); }
+        });
     }
 
     public void stop() {
@@ -145,9 +179,9 @@ public class TvClient {
     private boolean ensureConnected(boolean startup) {
         if (wsReady && ws != null) return true;
         disconnect();
-        if (!portOpen(tvIp, startup ? 1200 : 700)) {
+        if (!portOpen(tvIp, 1500)) {
             status("Looking for the TV...");
-            if (!resolve(300, false)) return false;
+            if (!resolve(1500, startup)) return false;
         }
         status("Connecting...");
         String name = Base64.encodeToString(APP_NAME.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
@@ -197,7 +231,7 @@ public class TvClient {
 
     // Background check so the status stays accurate and dead connections are dropped.
     private void probe() {
-        boolean on = portOpen(tvIp, 800);
+        boolean on = portOpen(tvIp, 1500);
         String state = on ? "on" : "off";
         if (!on && ws != null) worker.execute(this::disconnect);
         if (!state.equals(probeSaid)) {
@@ -226,13 +260,23 @@ public class TvClient {
     private String findTv() {
         String savedMac = prefs.getString("mac", null);
         String fallback = null;
+
+        // 1) Ask the network: Samsung TVs answer this "who's there?" broadcast.
+        for (String ip : ssdpSearch()) {
+            String mac = samsungMac(ip);
+            if (mac == null) continue;
+            if (savedMac == null || mac.equalsIgnoreCase(savedMac)) return ip;
+            if (fallback == null) fallback = ip;
+        }
+
+        // 2) Check every address on the local network.
         for (String subnet : localSubnets()) {
             List<String> open = new ArrayList<>();
-            ExecutorService pool = Executors.newFixedThreadPool(64);
+            ExecutorService pool = Executors.newFixedThreadPool(128);
             List<Future<String>> results = new ArrayList<>();
             for (int i = 1; i <= 254; i++) {
                 final String ip = subnet + "." + i;
-                results.add(pool.submit(() -> portOpen(ip, 500) ? ip : null));
+                results.add(pool.submit(() -> portOpen(ip, 1500) ? ip : null));
             }
             for (Future<String> f : results) {
                 try { String ip = f.get(); if (ip != null) open.add(ip); } catch (Exception ignored) { }
@@ -246,6 +290,41 @@ public class TvClient {
             }
         }
         return fallback;
+    }
+
+    /** SSDP discovery: returns addresses of devices that say they're a Samsung TV. */
+    private List<String> ssdpSearch() {
+        Set<String> found = new LinkedHashSet<>();
+        WifiManager.MulticastLock lock = null;
+        try {
+            if (wifi != null) { lock = wifi.createMulticastLock("tvremote"); lock.acquire(); }
+            String[] targets = {"urn:samsung.com:device:RemoteControlReceiver:1", "urn:dial-multiscreen-org:service:dial:1"};
+            try (DatagramSocket socket = new DatagramSocket()) {
+                socket.setSoTimeout(400);
+                InetAddress group = InetAddress.getByName("239.255.255.250");
+                for (int round = 0; round < 2; round++) {
+                    for (String st : targets) {
+                        String msg = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: " + st + "\r\n\r\n";
+                        byte[] b = msg.getBytes(StandardCharsets.US_ASCII);
+                        socket.send(new DatagramPacket(b, b.length, group, 1900));
+                    }
+                }
+                long until = System.currentTimeMillis() + 2500;
+                byte[] buf = new byte[2048];
+                while (System.currentTimeMillis() < until) {
+                    DatagramPacket reply = new DatagramPacket(buf, buf.length);
+                    try { socket.receive(reply); } catch (SocketTimeoutException e) { continue; }
+                    String body = new String(reply.getData(), 0, reply.getLength(), StandardCharsets.US_ASCII);
+                    if (body.toLowerCase().contains("samsung") || body.contains("RemoteControlReceiver") || body.contains("dial-multiscreen")) {
+                        found.add(reply.getAddress().getHostAddress());
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (lock != null && lock.isHeld()) lock.release();
+        }
+        return new ArrayList<>(found);
     }
 
     private Set<String> localSubnets() {

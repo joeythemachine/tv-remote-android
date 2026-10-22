@@ -32,6 +32,7 @@ public class RemoteView extends View {
         void onKey(String key);
         void onPower();
         void onExit();
+        void onStatusHold();
     }
 
     private static final float DW = 314f, DH = 514f;
@@ -75,6 +76,17 @@ public class RemoteView extends View {
     private Key active;
     private boolean exitPressed;
     private final RectF exitHit = new RectF(262, 462, 292, 494);
+    private final RectF statusHit = new RectF(30, 460, 256, 498);
+    private boolean statusPressed;
+    private final Runnable statusHold = new Runnable() {
+        @Override public void run() {
+            if (statusPressed) {
+                statusPressed = false;
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                actions.onStatusHold();
+            }
+        }
+    };
 
     private final Runnable repeater = new Runnable() {
         @Override public void run() {
@@ -294,6 +306,7 @@ public class RemoteView extends View {
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
                 if (exitHit.contains(x, y)) { exitPressed = true; invalidate(); return true; }
+                if (statusHit.contains(x, y)) { statusPressed = true; handler.postDelayed(statusHold, 600); return true; }
                 Key k = keyAt(x, y);
                 if (k != null) {
                     active = k;
@@ -306,8 +319,10 @@ public class RemoteView extends View {
             case MotionEvent.ACTION_MOVE:
                 if (active != null && !grow(active.cell).contains(x, y)) release(false);
                 if (exitPressed && !exitHit.contains(x, y)) { exitPressed = false; invalidate(); }
+                if (statusPressed && !statusHit.contains(x, y)) { statusPressed = false; handler.removeCallbacks(statusHold); }
                 return true;
             case MotionEvent.ACTION_UP:
+                if (statusPressed) { statusPressed = false; handler.removeCallbacks(statusHold); return true; }
                 if (exitPressed) {
                     exitPressed = false; invalidate();
                     if (exitHit.contains(x, y)) actions.onExit();
@@ -317,6 +332,8 @@ public class RemoteView extends View {
                 return true;
             case MotionEvent.ACTION_CANCEL:
                 exitPressed = false;
+                statusPressed = false;
+                handler.removeCallbacks(statusHold);
                 if (active != null) release(false);
                 return true;
         }
