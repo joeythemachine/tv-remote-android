@@ -76,6 +76,7 @@ public class TvClient {
     private volatile boolean wsReady;
     private long lastScan;
     private volatile String probeSaid;   // "on" / "off" / null
+    private volatile String lastProblem = "TV is off - press Power";   // why the last connection failed
 
     public TvClient(Context context, Listener listener) {
         this.prefs = context.getSharedPreferences("tv", Context.MODE_PRIVATE);
@@ -95,7 +96,7 @@ public class TvClient {
                 status("Connected to TV");
             } else {
                 probeSaid = "off";
-                status("Can't find the TV - hold here for details");
+                status(lastProblem);
             }
         });
         prober = Executors.newSingleThreadScheduledExecutor();
@@ -128,7 +129,7 @@ public class TvClient {
             prefs.edit().putString("ip", ip).apply();
             status("Connecting to " + ip + "...");
             if (ensureConnected(true)) { probeSaid = "on"; status("Connected to TV"); }
-            else { probeSaid = "off"; status("No TV at " + ip + " - hold here to change"); }
+            else { probeSaid = "off"; status(lastProblem); }
         });
     }
 
@@ -143,7 +144,7 @@ public class TvClient {
             if (ensureConnected(false) && send(key)) {
                 status("Connected to TV");
             } else {
-                status("TV is off - press Power");
+                status(lastProblem);
             }
         });
     }
@@ -159,7 +160,7 @@ public class TvClient {
                     probeSaid = "off";
                     status("TV turned off");
                 } else {
-                    status("Couldn't send Power - try again");
+                    status(lastProblem);
                 }
             } else {
                 String mac = prefs.getString("mac", null);
@@ -181,27 +182,45 @@ public class TvClient {
         disconnect();
         if (!portOpen(tvIp, 1500)) {
             status("Looking for the TV...");
-            if (!resolve(1500, startup)) return false;
+            if (!resolve(1500, startup)) {
+                lastProblem = "Can't find the TV - hold here for details";
+                return false;
+            }
         }
         status("Connecting...");
         String name = Base64.encodeToString(APP_NAME.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
         String url = "ws://" + tvIp + ":" + PORT + "/api/v2/channels/samsung.remote.control?name=" + name;
         CountDownLatch done = new CountDownLatch(1);
+        final String[] outcome = {"noanswer"};
         WebSocket socket = wsClient.newWebSocket(new Request.Builder().url(url).build(), new WebSocketListener() {
             @Override public void onMessage(WebSocket webSocket, String text) {
-                if (text.contains("ms.channel.connect")) { wsReady = true; done.countDown(); }
-                else if (text.contains("ms.channel.unauthorized")) {
-                    status("TV denied access - allow this tablet on the TV");
-                    done.countDown();
-                }
+                if (text.contains("ms.channel.connect")) { wsReady = true; outcome[0] = "ok"; done.countDown(); }
+                else if (text.contains("ms.channel.unauthorized")) { outcome[0] = "denied"; done.countDown(); }
             }
-            @Override public void onClosed(WebSocket webSocket, int code, String reason) { lost(webSocket); done.countDown(); }
-            @Override public void onFailure(WebSocket webSocket, Throwable t, Response r) { lost(webSocket); done.countDown(); }
+            @Override public void onClosed(WebSocket webSocket, int code, String reason) {
+                if (outcome[0].equals("noanswer")) outcome[0] = "closed";
+                lost(webSocket); done.countDown();
+            }
+            @Override public void onFailure(WebSocket webSocket, Throwable t, Response r) {
+                if (outcome[0].equals("noanswer")) outcome[0] = "closed";
+                lost(webSocket); done.countDown();
+            }
         });
         ws = socket;
         status("Connecting... (accept the prompt on the TV if one appears)");
         try { done.await(30, TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
-        if (!wsReady) { disconnect(); return false; }
+        if (!wsReady) {
+            disconnect();
+            switch (outcome[0]) {
+                case "denied":
+                    lastProblem = "TV refused this tablet - allow it in the TV's Mobile Device List"; break;
+                case "closed":
+                    lastProblem = "TV turned the remote away - check its Mobile Device List"; break;
+                default:
+                    lastProblem = "TV didn't answer the prompt - accept it on the TV, then tap a button";
+            }
+            return false;
+        }
         sleep(150);   // give the TV a moment before the first key
         if (prefs.getString("mac", null) == null) {
             String mac = samsungMac(tvIp);
@@ -237,7 +256,7 @@ public class TvClient {
         if (!state.equals(probeSaid)) {
             String before = probeSaid;
             probeSaid = state;
-            if (on) status("TV is on");
+            if (on) status(wsReady ? "Connected to TV" : "TV is on - tap a button to connect");
             else if (before != null) status("TV is off - press Power");
         }
     }
