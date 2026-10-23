@@ -37,8 +37,8 @@ public class MainActivity extends Activity {
         input.setPadding(pad, pad / 2, pad, pad / 2);
 
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Type on the TV")
-                .setMessage("Open the search box on the TV first, then type here.")
+                .setTitle("Search Plex")
+                .setMessage("Open Search in Plex on the TV (the highlight should be on A), then type here. Letters, numbers and spaces only.")
                 .setView(input)
                 .setPositiveButton("Send", (d, w) -> {
                     String text = input.getText().toString();

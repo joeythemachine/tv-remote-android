@@ -172,17 +172,69 @@ public class TvClient {
         });
     }
 
-    /** Types text into whatever on-screen keyboard is open on the TV. */
+    /**
+     * Types into Plex's on-screen letter grid by steering the highlight with the
+     * arrow keys and pressing OK on each character. Plex's grid is:
+     *
+     *   A B C D E F      row 0
+     *   G H I J K L      row 1
+     *   M N O P Q R      row 2
+     *   S T U V W X      row 3
+     *   Y Z 1 2 3 4      row 4
+     *   5 6 7 8 9 0      row 5
+     *   Delete Space Clear   row 6 (each two columns wide)
+     *
+     * The highlight must start on A, which is where Plex puts it when search opens.
+     */
     public void sendText(String text) {
         lastUse = System.currentTimeMillis();
         worker.execute(() -> {
             if (!ensureConnected(false)) { status(lastProblem); return; }
-            String b64 = Base64.encodeToString(text.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
-            WebSocket s = ws;
-            boolean sent = s != null && s.send("{\"method\":\"ms.remote.control\",\"params\":{\"Cmd\":\"" + b64
-                    + "\",\"DataOfCmd\":\"base64\",\"TypeOfRemote\":\"SendInputString\"}}");
-            status(sent ? "Sent \"" + text + "\"" : "Couldn't send text - try again");
+            status("Typing...");
+            int row = 0, col = 0;
+            String digits = "1234567890";
+            for (char ch : text.toUpperCase().toCharArray()) {
+                int r, c;
+                if (ch >= 'A' && ch <= 'Z') {
+                    r = (ch - 'A') / 6; c = (ch - 'A') % 6;
+                } else if (Character.isDigit(ch)) {
+                    int d = digits.indexOf(ch) + 26;   // digits continue after Z
+                    r = d / 6; c = d % 6;
+                } else if (ch == ' ') {
+                    // go to the digit row above Space, step down onto Space, press it
+                    int target = col <= 2 ? 2 : 3;
+                    if (!move(row, col, 5, target)) break;
+                    if (!key("KEY_DOWN") || !key("KEY_ENTER")) break;
+                    // climb back to the top row and slide to the left edge, so the
+                    // position is known again (A)
+                    boolean ok = true;
+                    for (int k = 0; k < 6 && ok; k++) ok = key("KEY_UP");
+                    for (int k = 0; k < 4 && ok; k++) ok = key("KEY_LEFT");
+                    if (!ok) break;
+                    row = 0; col = 0;
+                    continue;
+                } else {
+                    continue;   // the grid has no punctuation; skip it
+                }
+                if (!move(row, col, r, c) || !key("KEY_ENTER")) break;
+                row = r; col = c;
+            }
+            status("Typed \"" + text + "\"");
         });
+    }
+
+    private boolean move(int fromR, int fromC, int toR, int toC) {
+        for (int k = fromC; k < toC; k++) if (!key("KEY_RIGHT")) return false;
+        for (int k = fromC; k > toC; k--) if (!key("KEY_LEFT")) return false;
+        for (int k = fromR; k < toR; k++) if (!key("KEY_DOWN")) return false;
+        for (int k = fromR; k > toR; k--) if (!key("KEY_UP")) return false;
+        return true;
+    }
+
+    private boolean key(String k) {
+        boolean ok = send(k);
+        sleep(170);   // let Plex keep up
+        return ok;
     }
 
     public void power() {
