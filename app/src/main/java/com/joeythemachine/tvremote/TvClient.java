@@ -89,6 +89,7 @@ public class TvClient {
     // ---------------------------------------------------------------- public API
 
     public void start() {
+        running = true;
         worker.execute(() -> {
             status("Connecting...");
             if (ensureConnected(true)) {
@@ -134,13 +135,14 @@ public class TvClient {
     }
 
     public void stop() {
+        running = false;
+        reconnectWanted = false;
         if (prober != null) prober.shutdownNow();
         prober = null;
         worker.execute(this::disconnect);
     }
 
     public void sendKey(String key) {
-        lastUse = System.currentTimeMillis();
         worker.execute(() -> {
             boolean sent = ensureConnected(false) && send(key);
             if (!sent && wsReady) {           // connection had died quietly; try once more
@@ -153,7 +155,6 @@ public class TvClient {
 
     /** Opens the Plex app on the TV. */
     public void launchPlex() {
-        lastUse = System.currentTimeMillis();
         worker.execute(() -> {
             status("Opening Plex...");
             if (!ensureConnected(false)) { status(lastProblem); return; }
@@ -187,7 +188,6 @@ public class TvClient {
      * The highlight must start on A, which is where Plex puts it when search opens.
      */
     public void sendText(String text) {
-        lastUse = System.currentTimeMillis();
         worker.execute(() -> {
             if (!ensureConnected(false)) { status(lastProblem); return; }
             status("Typing...");
@@ -238,7 +238,6 @@ public class TvClient {
     }
 
     public void power() {
-        lastUse = System.currentTimeMillis();
         worker.execute(() -> {
             status("Checking TV...");
             boolean reachable = wsReady || resolve(1500, true);
@@ -272,7 +271,8 @@ public class TvClient {
         if (!tvAnswers(tvIp)) {
             status("Looking for the TV...");
             if (!resolve(1500, startup)) {
-                lastProblem = "Can't find the TV - hold here for details";
+                lastProblem = BUSY;
+                reconnectWanted = true;   // keep trying quietly in the background
                 return false;
             }
         }
@@ -319,7 +319,14 @@ public class TvClient {
     }
 
     private void lost(WebSocket socket) {
-        if (socket == ws) { wsReady = false; ws = null; }
+        if (socket == ws) {
+            boolean wasUp = wsReady;
+            wsReady = false; ws = null;
+            if (wasUp && running) {   // the TV dropped us (it does this during video)
+                reconnectWanted = true;
+                status(BUSY);
+            }
+        }
     }
 
     private void disconnect() {
@@ -337,20 +344,29 @@ public class TvClient {
         return s.send(json);
     }
 
-    private int probeMisses;
-    private volatile long lastUse = System.currentTimeMillis();
-    private static final long IDLE_MS = 3 * 60_000;   // let go of the TV after 3 idle minutes
+    private static final String BUSY = "Can't reach the TV (off, or playing video) - retrying";
+    private volatile boolean reconnectWanted;
+    private volatile boolean running;
+    private long lastRetry;
 
-    // Gentle background check so the status stays accurate. It leaves a working
-    // connection alone, and only decides the TV is off after several misses in a
-    // row (a Wi-Fi TV is often slow to answer one check).
-    // Runs every few seconds but never touches the network: it only releases an
-    // idle connection. (Repeatedly poking the TV to see if it was on is what
-    // made its remote service jam, so the app no longer does that.)
+    // Every few seconds. It never pokes the TV while connected. The connection
+    // stays open the whole time the app is on screen (an open connection may
+    // survive video playback, when the TV refuses new ones). If the TV has
+    // dropped us, it retries politely every 15 seconds until the TV answers.
     private void probe() {
-        if (wsReady && ws != null && System.currentTimeMillis() - lastUse > IDLE_MS) {
-            worker.execute(() -> { disconnect(); status("Ready - tap any button"); });
-        }
+        if (!running || !reconnectWanted || wsReady) return;
+        long now = System.currentTimeMillis();
+        if (now - lastRetry < 15_000) return;
+        lastRetry = now;
+        worker.execute(() -> {
+            if (wsReady || !reconnectWanted) return;
+            if (tvAnswers(tvIp) && ensureConnected(false)) {
+                reconnectWanted = false;
+                status("Connected to TV");
+            } else {
+                status(BUSY);
+            }
+        });
     }
 
     // ---------------------------------------------------------------- finding the TV
