@@ -63,8 +63,7 @@ public class TvClient {
 
     private final OkHttpClient wsClient = new OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.SECONDS)
-            .pingInterval(10, TimeUnit.SECONDS)   // notices a dead connection
+            .readTimeout(0, TimeUnit.SECONDS)   // no pings: 2016 Samsung TVs don't answer them
             .build();
     private final OkHttpClient httpClient = new OkHttpClient.Builder()
             .connectTimeout(2, TimeUnit.SECONDS)
@@ -100,7 +99,7 @@ public class TvClient {
             }
         });
         prober = Executors.newSingleThreadScheduledExecutor();
-        prober.scheduleWithFixedDelay(this::probe, 3, 3, TimeUnit.SECONDS);
+        prober.scheduleWithFixedDelay(this::probe, 6, 6, TimeUnit.SECONDS);
     }
 
     /** The address the app is using for the TV. */
@@ -141,11 +140,12 @@ public class TvClient {
 
     public void sendKey(String key) {
         worker.execute(() -> {
-            if (ensureConnected(false) && send(key)) {
-                status("Connected to TV");
-            } else {
-                status(lastProblem);
+            boolean sent = ensureConnected(false) && send(key);
+            if (!sent && wsReady) {           // connection had died quietly; try once more
+                disconnect();
+                sent = ensureConnected(false) && send(key);
             }
+            status(sent ? "Connected to TV" : lastProblem);
         });
     }
 
@@ -248,16 +248,25 @@ public class TvClient {
         return s.send(json);
     }
 
-    // Background check so the status stays accurate and dead connections are dropped.
+    private int probeMisses;
+
+    // Gentle background check so the status stays accurate. It leaves a working
+    // connection alone, and only decides the TV is off after several misses in a
+    // row (a Wi-Fi TV is often slow to answer one check).
     private void probe() {
-        boolean on = portOpen(tvIp, 1500);
-        String state = on ? "on" : "off";
-        if (!on && ws != null) worker.execute(this::disconnect);
-        if (!state.equals(probeSaid)) {
+        if (wsReady && ws != null) {
+            probeMisses = 0;
+            if (!"on".equals(probeSaid)) { probeSaid = "on"; status("Connected to TV"); }
+            return;
+        }
+        boolean on = portOpen(tvIp, 2500);
+        if (on) {
+            probeMisses = 0;
+            if (!"on".equals(probeSaid)) { probeSaid = "on"; status("TV is on - tap a button to connect"); }
+        } else if (++probeMisses >= 3 && !"off".equals(probeSaid)) {
             String before = probeSaid;
-            probeSaid = state;
-            if (on) status(wsReady ? "Connected to TV" : "TV is on - tap a button to connect");
-            else if (before != null) status("TV is off - press Power");
+            probeSaid = "off";
+            if (before != null) status("TV is off - press Power");
         }
     }
 
