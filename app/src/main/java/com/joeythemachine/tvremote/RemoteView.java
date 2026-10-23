@@ -33,9 +33,11 @@ public class RemoteView extends View {
         void onPower();
         void onExit();
         void onStatusHold();
+        void onPlex();
+        void onKeyboard();
     }
 
-    private static final float DW = 314f, DH = 514f;
+    private static final float DW = 314f, DH = 588f;
 
     private static final int KEY_BROWN = 0xFF4B4637;
     private static final int KEY_POWER = 0xFFC2522B;
@@ -43,7 +45,7 @@ public class RemoteView extends View {
     private static final int SIDE      = 0xFF2B2619;
     private static final int CREAM     = 0xFFF3E3B6;
 
-    private enum Glyph { TEXT, UP, DOWN, LEFT, RIGHT, MINUS, PLUS }
+    private enum Glyph { TEXT, UP, DOWN, LEFT, RIGHT, MINUS, PLUS, PLEX, KEYBOARD }
 
     private static class Key {
         final String action;   // "POWER" or a KEY_ code
@@ -75,8 +77,8 @@ public class RemoteView extends View {
     private String status = "";
     private Key active;
     private boolean exitPressed;
-    private final RectF exitHit = new RectF(262, 462, 292, 494);
-    private final RectF statusHit = new RectF(30, 460, 256, 498);
+    private final RectF exitHit = new RectF(262, 536, 292, 568);
+    private final RectF statusHit = new RectF(30, 534, 256, 572);
     private boolean statusPressed;
     private final Runnable statusHold = new Runnable() {
         @Override public void run() {
@@ -122,10 +124,15 @@ public class RemoteView extends View {
         addKey("POWER", "Power", Glyph.TEXT, KEY_POWER, new RectF(left + 4, y + 4, left + half - 8, y + h - 4));
         addKey("KEY_SOURCE", "Source", Glyph.TEXT, KEY_BROWN, new RectF(left + half + 8, y + 4, left + width - 4, y + h - 4));
 
+        // Plex / Keyboard
+        y = 100f;
+        addKey("PLEX", "Plex", Glyph.PLEX, KEY_BROWN, new RectF(left + 4, y + 4, left + half - 8, y + h - 4));
+        addKey("KEYBOARD", "", Glyph.KEYBOARD, KEY_BROWN, new RectF(left + half + 8, y + 4, left + width - 4, y + h - 4));
+
         // D-pad: columns 0.88 : 1 : 0.88
         float unit = width / 2.76f, c0 = unit * 0.88f, c1 = unit;
         float x0 = left, x1 = left + c0, x2 = left + c0 + c1, x3 = left + width;
-        float up = 100f, mid = 158f, down = 224f, end = 282f;
+        float up = 174f, mid = 232f, down = 298f, end = 356f;
         addKey("KEY_UP", "", Glyph.UP, KEY_BROWN, inset(x1, up, x2, mid));
         addKey("KEY_LEFT", "", Glyph.LEFT, KEY_BROWN, inset(x0, mid, x1, down));
         addKey("KEY_ENTER", "OK", Glyph.TEXT, KEY_OK, inset(x1, mid, x2, down));
@@ -134,14 +141,14 @@ public class RemoteView extends View {
 
         // Back / Home / Menu
         float third = width / 3f;
-        addKey("KEY_RETURN", "Back", Glyph.TEXT, KEY_BROWN, inset(left, 296, left + third, 356));
-        addKey("KEY_HOME", "Home", Glyph.TEXT, KEY_BROWN, inset(left + third, 296, left + 2 * third, 356));
-        addKey("KEY_MENU", "Menu", Glyph.TEXT, KEY_BROWN, inset(left + 2 * third, 296, left + width, 356));
+        addKey("KEY_RETURN", "Back", Glyph.TEXT, KEY_BROWN, inset(left, 370, left + third, 430));
+        addKey("KEY_HOME", "Home", Glyph.TEXT, KEY_BROWN, inset(left + third, 370, left + 2 * third, 430));
+        addKey("KEY_MENU", "Menu", Glyph.TEXT, KEY_BROWN, inset(left + 2 * third, 370, left + width, 430));
 
         // Volume
-        Key down1 = addKey("KEY_VOLDOWN", "", Glyph.MINUS, KEY_BROWN, inset(left, 386, left + third, 452));
-        addKey("KEY_MUTE", "Mute", Glyph.TEXT, KEY_BROWN, inset(left + third, 386, left + 2 * third, 452));
-        Key up1 = addKey("KEY_VOLUP", "", Glyph.PLUS, KEY_BROWN, inset(left + 2 * third, 386, left + width, 452));
+        Key down1 = addKey("KEY_VOLDOWN", "", Glyph.MINUS, KEY_BROWN, inset(left, 460, left + third, 526));
+        addKey("KEY_MUTE", "Mute", Glyph.TEXT, KEY_BROWN, inset(left + third, 460, left + 2 * third, 526));
+        Key up1 = addKey("KEY_VOLUP", "", Glyph.PLUS, KEY_BROWN, inset(left + 2 * third, 460, left + width, 526));
         down1.repeats = true;
         up1.repeats = true;
     }
@@ -202,20 +209,20 @@ public class RemoteView extends View {
         text.setColor(0xFFF6E7BE);
         text.setTextSize(11);
         text.setLetterSpacing(0.35f);
-        canvas.drawText("VOLUME", DW / 2f, 375, text);
+        canvas.drawText("VOLUME", DW / 2f, 449, text);
         text.setLetterSpacing(0f);
 
         // status
         text.setColor(0xFF6E5216);
         text.setTextSize(11);
-        canvas.drawText(status, DW / 2f, 482, text);
+        canvas.drawText(status, DW / 2f, 556, text);
 
         // tiny exit X
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeWidth(1.6f);
         stroke.setStrokeCap(Paint.Cap.ROUND);
         stroke.setColor(exitPressed ? SIDE : 0xFF7A5C1A);
-        float cx = 277, cy = 478;
+        float cx = 277, cy = 552;
         canvas.drawLine(cx - 4, cy - 4, cx + 4, cy + 4, stroke);
         canvas.drawLine(cx + 4, cy - 4, cx - 4, cy + 4, stroke);
 
@@ -288,6 +295,37 @@ public class RemoteView extends View {
                 path.moveTo(cx + 6.5f, cy); path.lineTo(cx - 6.5f, cy - 8); path.lineTo(cx - 6.5f, cy + 8); path.close();
                 canvas.drawPath(path, fill);
                 break;
+            case PLEX: {
+                // "Plex" with its gold chevron
+                text.setColor(CREAM);
+                text.setTextSize(18);
+                Paint.FontMetrics pm = text.getFontMetrics();
+                float tw = text.measureText("Plex");
+                float base = cy - (pm.ascent + pm.descent) / 2f;
+                canvas.drawText("Plex", cx - 7, base, text);
+                float chx = cx - 7 + tw / 2f + 6;
+                fill.setColor(0xFFE5A00D);
+                path.moveTo(chx, cy - 8); path.lineTo(chx + 5, cy - 8); path.lineTo(chx + 11, cy);
+                path.lineTo(chx + 5, cy + 8); path.lineTo(chx, cy + 8); path.lineTo(chx + 6, cy); path.close();
+                canvas.drawPath(path, fill);
+                fill.setColor(CREAM);
+                break;
+            }
+            case KEYBOARD: {
+                // a little keyboard drawing
+                stroke.setStyle(Paint.Style.STROKE);
+                stroke.setStrokeWidth(1.6f);
+                stroke.setColor(CREAM);
+                canvas.drawRoundRect(cx - 17, cy - 11, cx + 17, cy + 11, 3, 3, stroke);
+                for (int row = 0; row < 2; row++) {
+                    for (int col = 0; col < 6; col++) {
+                        float kx = cx - 13 + col * 5.2f, ky = cy - 7 + row * 5;
+                        canvas.drawRect(kx, ky, kx + 3, ky + 3, fill);
+                    }
+                }
+                canvas.drawRect(cx - 9, cy + 4, cx + 9, cy + 7, fill);
+                break;
+            }
             case MINUS:
                 canvas.drawRect(cx - 11, cy - 2, cx + 11, cy + 2, fill);
                 break;
@@ -347,6 +385,8 @@ public class RemoteView extends View {
         animate(k, 0f, 140);
         if (!fire) return;
         if ("POWER".equals(k.action)) actions.onPower();
+        else if ("PLEX".equals(k.action)) actions.onPlex();
+        else if ("KEYBOARD".equals(k.action)) actions.onKeyboard();
         else actions.onKey(k.action);
     }
 

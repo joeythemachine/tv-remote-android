@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
 import android.text.InputType;
+import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 
 public class MainActivity extends Activity {
@@ -19,9 +21,45 @@ public class MainActivity extends Activity {
             @Override public void onPower() { tv.power(); }
             @Override public void onExit() { finish(); }
             @Override public void onStatusHold() { showAddressDialog(); }
+            @Override public void onPlex() { tv.launchPlex(); }
+            @Override public void onKeyboard() { showKeyboardDialog(); }
         });
         setContentView(remote);
         tv = new TvClient(this, text -> remote.setStatus(text));
+    }
+
+    private void showKeyboardDialog() {
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setImeOptions(EditorInfo.IME_ACTION_SEND);
+        input.setHint("Type here, then tap Send");
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        input.setPadding(pad, pad / 2, pad, pad / 2);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Type on the TV")
+                .setMessage("Open the search box on the TV first, then type here.")
+                .setView(input)
+                .setPositiveButton("Send", (d, w) -> {
+                    String text = input.getText().toString();
+                    if (!text.isEmpty()) tv.sendText(text);
+                })
+                .setNegativeButton("Cancel", null)
+                .create();
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                String text = input.getText().toString();
+                if (!text.isEmpty()) tv.sendText(text);
+                dialog.dismiss();
+                return true;
+            }
+            return false;
+        });
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        }
+        dialog.show();
+        input.requestFocus();
     }
 
     private String appVersion() {

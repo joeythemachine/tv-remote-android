@@ -52,6 +52,7 @@ public class TvClient {
     private static final int PORT = 8001;
     private static final String APP_NAME = "Galaxy Tab Remote";   // name shown on the TV
     private static final String DEFAULT_IP = "192.168.86.35";
+    private static final String PLEX_APP_ID = "3201512006963";   // Plex on Samsung Tizen TVs
 
     private final SharedPreferences prefs;
     private final ConnectivityManager connectivity;
@@ -147,6 +148,40 @@ public class TvClient {
                 sent = ensureConnected(false) && send(key);
             }
             status(sent ? "Connected to TV" : lastProblem);
+        });
+    }
+
+    /** Opens the Plex app on the TV. */
+    public void launchPlex() {
+        lastUse = System.currentTimeMillis();
+        worker.execute(() -> {
+            status("Opening Plex...");
+            if (!ensureConnected(false)) { status(lastProblem); return; }
+            WebSocket s = ws;
+            boolean sent = s != null && s.send("{\"method\":\"ms.channel.emit\",\"params\":{\"event\":\"ed.apps.launch\",\"to\":\"host\","
+                    + "\"data\":{\"appId\":\"" + PLEX_APP_ID + "\",\"action_type\":\"DEEP_LINK\"}}}");
+            // Some TVs prefer this direct request instead; sending both is harmless.
+            try {
+                Request req = new Request.Builder()
+                        .url("http://" + tvIp + ":" + PORT + "/api/v2/applications/" + PLEX_APP_ID)
+                        .post(okhttp3.RequestBody.create(new byte[0], (okhttp3.MediaType) null))
+                        .build();
+                try (Response r = httpClient.newCall(req).execute()) { if (r.isSuccessful()) sent = true; }
+            } catch (Exception ignored) { }
+            status(sent ? "Opening Plex" : "Couldn't open Plex - try again");
+        });
+    }
+
+    /** Types text into whatever on-screen keyboard is open on the TV. */
+    public void sendText(String text) {
+        lastUse = System.currentTimeMillis();
+        worker.execute(() -> {
+            if (!ensureConnected(false)) { status(lastProblem); return; }
+            String b64 = Base64.encodeToString(text.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+            WebSocket s = ws;
+            boolean sent = s != null && s.send("{\"method\":\"ms.remote.control\",\"params\":{\"Cmd\":\"" + b64
+                    + "\",\"DataOfCmd\":\"base64\",\"TypeOfRemote\":\"SendInputString\"}}");
+            status(sent ? "Sent \"" + text + "\"" : "Couldn't send text - try again");
         });
     }
 
