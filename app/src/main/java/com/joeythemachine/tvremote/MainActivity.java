@@ -24,6 +24,11 @@ public class MainActivity extends Activity {
         tv = new TvClient(this, text -> remote.setStatus(text));
     }
 
+    private String appVersion() {
+        try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+        catch (Exception e) { return "?"; }
+    }
+
     private void showAddressDialog() {
         EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
@@ -34,7 +39,7 @@ public class MainActivity extends Activity {
 
         new AlertDialog.Builder(this)
                 .setTitle("TV address")
-                .setMessage("This tablet: " + tv.getTabletIp()
+                .setMessage("Version " + appVersion() + "\nThis tablet: " + tv.getTabletIp()
                         + "\n\nThe TV's address is on the TV under Network \u2192 Network Status \u2192 IP Settings.")
                 .setView(input)
                 .setPositiveButton("Connect", (d, w) -> {

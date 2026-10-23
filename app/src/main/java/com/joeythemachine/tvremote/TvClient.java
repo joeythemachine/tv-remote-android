@@ -139,6 +139,7 @@ public class TvClient {
     }
 
     public void sendKey(String key) {
+        lastUse = System.currentTimeMillis();
         worker.execute(() -> {
             boolean sent = ensureConnected(false) && send(key);
             if (!sent && wsReady) {           // connection had died quietly; try once more
@@ -150,6 +151,7 @@ public class TvClient {
     }
 
     public void power() {
+        lastUse = System.currentTimeMillis();
         worker.execute(() -> {
             status("Checking TV...");
             boolean reachable = wsReady || resolve(1500, true);
@@ -249,6 +251,8 @@ public class TvClient {
     }
 
     private int probeMisses;
+    private volatile long lastUse = System.currentTimeMillis();
+    private static final long IDLE_MS = 3 * 60_000;   // let go of the TV after 3 idle minutes
 
     // Gentle background check so the status stays accurate. It leaves a working
     // connection alone, and only decides the TV is off after several misses in a
@@ -256,13 +260,19 @@ public class TvClient {
     private void probe() {
         if (wsReady && ws != null) {
             probeMisses = 0;
+            if (System.currentTimeMillis() - lastUse > IDLE_MS) {
+                // Idle: release the connection so it can't go stale and jam the TV.
+                worker.execute(() -> { disconnect(); status("Ready - tap any button"); });
+                probeSaid = "on";
+                return;
+            }
             if (!"on".equals(probeSaid)) { probeSaid = "on"; status("Connected to TV"); }
             return;
         }
         boolean on = portOpen(tvIp, 2500);
         if (on) {
             probeMisses = 0;
-            if (!"on".equals(probeSaid)) { probeSaid = "on"; status("TV is on - tap a button to connect"); }
+            if (!"on".equals(probeSaid)) { probeSaid = "on"; status("Ready - tap any button"); }
         } else if (++probeMisses >= 3 && !"off".equals(probeSaid)) {
             String before = probeSaid;
             probeSaid = "off";
