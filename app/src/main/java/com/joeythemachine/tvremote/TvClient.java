@@ -217,7 +217,7 @@ public class TvClient {
     private boolean ensureConnected(boolean startup) {
         if (wsReady && ws != null) return true;
         disconnect();
-        if (!portOpen(tvIp, 1500)) {
+        if (!tvAnswers(tvIp)) {
             status("Looking for the TV...");
             if (!resolve(1500, startup)) {
                 lastProblem = "Can't find the TV - hold here for details";
@@ -292,26 +292,12 @@ public class TvClient {
     // Gentle background check so the status stays accurate. It leaves a working
     // connection alone, and only decides the TV is off after several misses in a
     // row (a Wi-Fi TV is often slow to answer one check).
+    // Runs every few seconds but never touches the network: it only releases an
+    // idle connection. (Repeatedly poking the TV to see if it was on is what
+    // made its remote service jam, so the app no longer does that.)
     private void probe() {
-        if (wsReady && ws != null) {
-            probeMisses = 0;
-            if (System.currentTimeMillis() - lastUse > IDLE_MS) {
-                // Idle: release the connection so it can't go stale and jam the TV.
-                worker.execute(() -> { disconnect(); status("Ready - tap any button"); });
-                probeSaid = "on";
-                return;
-            }
-            if (!"on".equals(probeSaid)) { probeSaid = "on"; status("Connected to TV"); }
-            return;
-        }
-        boolean on = portOpen(tvIp, 2500);
-        if (on) {
-            probeMisses = 0;
-            if (!"on".equals(probeSaid)) { probeSaid = "on"; status("Ready - tap any button"); }
-        } else if (++probeMisses >= 3 && !"off".equals(probeSaid)) {
-            String before = probeSaid;
-            probeSaid = "off";
-            if (before != null) status("TV is off - press Power");
+        if (wsReady && ws != null && System.currentTimeMillis() - lastUse > IDLE_MS) {
+            worker.execute(() -> { disconnect(); status("Ready - tap any button"); });
         }
     }
 
@@ -319,7 +305,7 @@ public class TvClient {
 
     /** Makes sure tvIp points at the TV; searches the network if its address changed. */
     private boolean resolve(int quickTimeoutMs, boolean force) {
-        if (portOpen(tvIp, quickTimeoutMs)) return true;
+        if (tvAnswers(tvIp)) return true;
         long now = System.currentTimeMillis();
         if (!force && now - lastScan < 20_000) return false;   // don't rescan on every tap
         lastScan = now;
@@ -349,7 +335,7 @@ public class TvClient {
             List<Future<String>> results = new ArrayList<>();
             for (int i = 1; i <= 254; i++) {
                 final String ip = subnet + "." + i;
-                results.add(pool.submit(() -> portOpen(ip, 1500) ? ip : null));
+                results.add(pool.submit(() -> tvAnswers(ip) ? ip : null));   // polite request, not a bare connection
             }
             for (Future<String> f : results) {
                 try { String ip = f.get(); if (ip != null) open.add(ip); } catch (Exception ignored) { }
@@ -430,6 +416,11 @@ public class TvClient {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Polite check: asks the TV for its info page, a normal request it handles and closes. */
+    private boolean tvAnswers(String ip) {
+        return samsungMac(ip) != null;
     }
 
     private static boolean portOpen(String ip, int timeoutMs) {
